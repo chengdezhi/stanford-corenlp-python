@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: ascii -*-
+# coding=utf-8
 """
 JSON-RPC (remote procedure call).
 

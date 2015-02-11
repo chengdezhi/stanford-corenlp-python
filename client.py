@@ -1,3 +1,4 @@
+# coding=utf-8
 import json
 from jsonrpc import ServerProxy, JsonRpc20, TransportTcpIp
 from pprint import pprint

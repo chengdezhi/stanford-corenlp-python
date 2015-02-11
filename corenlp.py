@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# coding=utf-8
 #
 # corenlp  - Python interface to Stanford Core NLP tools
 # Copyright (c) 2014 Dustin Smith
@@ -72,7 +72,7 @@ def parse_parser_results(text):
     """
     results = {"sentences": []}
     state = STATE_START
-    for line in text.encode('utf-8').split("\n"):
+    for line in text.split("\n"):
         line = line.strip()
         
         if line.startswith("Sentence #"):
