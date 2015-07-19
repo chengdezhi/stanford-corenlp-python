@@ -28,7 +28,7 @@ import logging
 
 VERBOSE = True
 
-STATE_START, STATE_TEXT, STATE_WORDS, STATE_TREE, STATE_DEPENDENCY, STATE_COREFERENCE = 0, 1, 2, 3, 4, 5
+STATE_START, STATE_TEXT, STATE_WORDS, STATE_TREE, STATE_DEPENDENCY, STATE_COREFERENCE, STATE_STOP = 0, 1, 2, 3, 4, 5, 99
 WORD_PATTERN = re.compile('\[([^\]]+)\]')
 CR_PATTERN = re.compile(r"\((\d*),(\d)*,\[(\d*),(\d*)\]\) -> \((\d*),(\d)*,\[(\d*),(\d*)\]\), that is: \"(.*)\" -> \"(.*)\"")
 
@@ -74,30 +74,32 @@ def parse_parser_results(text):
     state = STATE_START
     for line in text.split("\n"):
         line = line.strip()
-        
+        if line.startswith("(ROOT"):
+            state = STATE_TREE
+        if line.startswith("NLP>"):
+            state = STATE_STOP
         if line.startswith("Sentence #"):
-            sentence = {'words':[], 'parsetree':[], 'dependencies':[]}
+            sentence = {'words': [], 'parsetree': [], 'dependencies': []}
             results["sentences"].append(sentence)
             state = STATE_TEXT
-        
+
         elif state == STATE_TEXT:
             sentence['text'] = line
             state = STATE_WORDS
-        
+
         elif state == STATE_WORDS:
             if not line.startswith("[Text="):
                 raise Exception('Parse error. Could not find "[Text=" in: %s' % line)
             for s in WORD_PATTERN.findall(line):
                 sentence['words'].append(parse_bracketed(s))
-            state = STATE_TREE
-        
+
         elif state == STATE_TREE:
             if len(line) == 0:
                 state = STATE_DEPENDENCY
                 sentence['parsetree'] = " ".join(sentence['parsetree'])
             else:
                 sentence['parsetree'].append(line)
-        
+
         elif state == STATE_DEPENDENCY:
             if len(line) == 0:
                 state = STATE_COREFERENCE
@@ -105,8 +107,8 @@ def parse_parser_results(text):
                 split_entry = re.split("\(|, ", line[:-1])
                 if len(split_entry) == 3:
                     rel, left, right = map(lambda x: remove_id(x), split_entry)
-                    sentence['dependencies'].append(tuple([rel,left,right]))
-        
+                    sentence['dependencies'].append(tuple([rel, left, right]))
+
         elif state == STATE_COREFERENCE:
             if "Coreference set" in line:
                 if 'coref' not in results:
@@ -118,7 +120,7 @@ def parse_parser_results(text):
                     src_i, src_pos, src_l, src_r = int(src_i)-1, int(src_pos)-1, int(src_l)-1, int(src_r)-1
                     sink_i, sink_pos, sink_l, sink_r = int(sink_i)-1, int(sink_pos)-1, int(sink_l)-1, int(sink_r)-1
                     coref_set.append(((src_word, src_i, src_pos, src_l, src_r), (sink_word, sink_i, sink_pos, sink_l, sink_r)))
-    
+
     return results
 
 
@@ -132,70 +134,70 @@ class StanfordCoreNLP(object):
         Checks the location of the jar files.
         Spawns the server as a process.
         """
-        jars = ["stanford-corenlp-3.5.1.jar",
-                "stanford-corenlp-3.5.1-models.jar",
+        jars = ["stanford-corenlp-3.5.2.jar",
+                "stanford-corenlp-3.5.2-models.jar",
                 "joda-time.jar",
                 "xom.jar",
                 "jollyday.jar"]
-       
+
         # if CoreNLP libraries are in a different directory,
         # change the corenlp_path variable to point to them
         if not corenlp_path:
-            corenlp_path = "./stanford-corenlp-full-2015-01-30/"
-        
+            corenlp_path = "./stanford-corenlp-full-2015-04-20/"
+
         java_path = "java"
         classname = "edu.stanford.nlp.pipeline.StanfordCoreNLP"
         # include the properties file, so you can change defaults
         # but any changes in output format will break parse_parser_results()
-        props = "-props default.properties" 
-        
+        props = "-props default.properties"
+
         # add and check classpaths
         jars = [corenlp_path + jar for jar in jars]
         for jar in jars:
             if not os.path.exists(jar):
                 logger.error("Error! Cannot locate %s" % jar)
                 sys.exit(1)
-        
+
         # spawn the server
         start_corenlp = "%s -Xmx1800m -cp %s %s %s" % (java_path, ':'.join(jars), classname, props)
-        if VERBOSE: 
+        if VERBOSE:
             logger.debug(start_corenlp)
         self.corenlp = pexpect.spawn(start_corenlp)
-        
+
         # show progress bar while loading the models
         widgets = ['Loading Models: ', Fraction()]
         pbar = ProgressBar(widgets=widgets, maxval=5, force_update=True).start()
-        self.corenlp.expect("done.", timeout=20) # Load pos tagger model (~5sec)
+        self.corenlp.expect("done.", timeout=20)  # Load pos tagger model (~5sec)
         pbar.update(1)
-        self.corenlp.expect("done.", timeout=200) # Load NER-all classifier (~33sec)
+        self.corenlp.expect("done.", timeout=200)  # Load NER-all classifier (~33sec)
         pbar.update(2)
-        self.corenlp.expect("done.", timeout=600) # Load NER-muc classifier (~60sec)
+        self.corenlp.expect("done.", timeout=600)  # Load NER-muc classifier (~60sec)
         pbar.update(3)
-        self.corenlp.expect("done.", timeout=600) # Load CoNLL classifier (~50sec)
+        self.corenlp.expect("done.", timeout=600)  # Load CoNLL classifier (~50sec)
         pbar.update(4)
-        self.corenlp.expect("done.", timeout=200) # Loading PCFG (~3sec)
+        self.corenlp.expect("done.", timeout=200)  # Loading PCFG (~3sec)
         pbar.update(5)
         self.corenlp.expect("Entering interactive shell.")
         pbar.finish()
-    
+
     def _parse(self, text):
         """
         This is the core interaction with the parser.
-        
+
         It returns a Python data-structure, while the parse()
         function returns a JSON object
         """
         # clean up anything leftover
         while True:
             try:
-                self.corenlp.read_nonblocking (4000, 0.3)
+                self.corenlp.read_nonblocking(4000, 0.3)
             except pexpect.TIMEOUT:
                 break
-        
+
         self.corenlp.sendline(text)
-        
+
         # How much time should we give the parser to parse it?
-        # the idea here is that you increase the timeout as a 
+        # the idea here is that you increase the timeout as a
         # function of the text's length.
         # anything longer than 5 seconds requires that you also
         # increase timeout=5 in jsonrpc.py
@@ -207,7 +209,7 @@ class StanfordCoreNLP(object):
             # Time left, read more data
             try:
                 incoming += self.corenlp.read_nonblocking(2000, 1)
-                if "\nNLP>" in incoming: 
+                if "\nNLP>" in incoming:
                     break
                 time.sleep(0.0001)
             except pexpect.TIMEOUT:
@@ -218,20 +220,20 @@ class StanfordCoreNLP(object):
                     continue
             except pexpect.EOF:
                 break
-        
-        if VERBOSE: 
+
+        if VERBOSE:
             logger.debug("%s\n%s" % ('='*40, incoming))
         try:
             results = parse_parser_results(incoming)
         except Exception, e:
-            if VERBOSE: 
+            if VERBOSE:
                 logger.debug(traceback.format_exc())
             raise e
-        
+
         return results
-    
+
     def parse(self, text):
-        """ 
+        """
         This function takes a text string, sends it to the Stanford parser,
         reads in the result, parses the results and returns a list
         with one dictionary entry for each parsed sentence, in JSON format.
@@ -253,9 +255,9 @@ if __name__ == '__main__':
     options, args = parser.parse_args()
     server = jsonrpc.Server(jsonrpc.JsonRpc20(),
                             jsonrpc.TransportTcpIp(addr=(options.host, int(options.port))))
-    
+
     nlp = StanfordCoreNLP()
     server.register_function(nlp.parse)
-    
+
     logger.info('Serving on http://%s:%s' % (options.host, options.port))
     server.serve()
